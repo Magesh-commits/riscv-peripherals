@@ -1,1 +1,1 @@
-Here with we have attached the verilog file which resembles ads1015 ic with a small modification that is without the analog part in it. I have also attached the driver code to run the verilog code in Nexys A7 fpga board for future applications
+Here with we have attached the verilog file which resembles ads1015 ic with a small modification that is without the analog part in it.
