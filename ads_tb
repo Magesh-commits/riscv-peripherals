@@ -1,0 +1,212 @@
+`timescale 1ns/1ps
+`include "i2c_Goutham2.v"
+
+module ads_tb;
+
+    reg clk;
+    reg rst;
+    reg scl;
+    reg sda_drive;
+    wire sda;  // bidirectional SDA
+
+    reg sw_1;
+    wire [7:0] ledg;
+    wire [17:0] ledr;
+
+    // Pullup for SDA line (open-drain simulation)
+    reg sda_out_en;
+    reg sda_out_val;
+    assign sda = sda_out_en ? sda_out_val : 1'bz;
+
+    // Instantiate the DUT
+    i2c_Goutham2 uut (
+        .SCL(scl),
+        .RST(rst),
+        .clk(clk),
+        .SDA(sda),
+        .SW_1(sw_1),
+        .LEDG(ledg),
+        .LEDR(ledr)
+    );
+
+    // Generate system clock (100 MHz)
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    initial begin
+        $dumpfile("i2c_Goutham_tb2.vcd");
+        $dumpvars(0, ads_tb);
+
+        rst = 1;
+        scl = 1;
+        sda_out_en = 1;
+        sda_out_val = 1;
+        sw_1 = 0;
+
+        #20;
+        rst = 0;
+        #10;
+
+        // Write conf register = 0x3000 at address pointer 0x00
+        i2c_write_transaction();
+
+        // Write pointer 0x00 to read from conv register
+        i2c_write_transaction1();
+
+        // Read back conv register (2 bytes)
+        i2c_read_transaction();
+
+        $finish;
+    end
+
+    // Task to generate I2C start condition (SDA falls while SCL=1)
+    task i2c_start;
+    begin
+        sda_out_val = 1; sda_out_en = 1; #10;
+        scl = 1; #10;
+        sda_out_val = 0; sda_out_en = 1; #10;
+        scl = 0; #10;
+    end
+    endtask
+
+    // Task to generate I2C stop condition (SDA rises while SCL=1)
+    task i2c_stop;
+    begin
+        sda_out_val = 0; sda_out_en = 1; #10;
+        scl = 1; #10;
+        sda_out_val = 1; sda_out_en = 1; #10;
+    end
+    endtask
+
+    // Task to send a byte over I2C (MSB first)
+    task i2c_send_byte(input [7:0] byte);
+    integer i;
+    begin
+        $display("Sending byte: 0x%02h at time %0t", byte, $time);
+        for(i=7; i>=0; i=i-1) begin
+            sda_out_val = byte[i];
+            sda_out_en = 1;
+            #5;
+            scl = 1; #10;
+            scl = 0; #10;
+        end
+
+        // Release SDA for ACK bit (slave drives)
+        sda_out_en = 0;
+        #5;
+        scl = 1; #10; // ACK clock pulse
+        scl = 0; #10;
+        sda_out_en = 1; // take control back after ACK
+    end
+    endtask
+
+    // Task to read a byte over I2C (MSB first)
+    // ack=0 to send ACK, ack=1 to send NACK after byte received
+    task i2c_read_byte(output [7:0] data, input ack);
+    integer i;
+    begin
+        sda_out_en = 0; // release SDA for slave to drive
+
+        for(i=7; i>=0; i=i-1) begin
+            #5;
+            scl = 1; #10;
+            data[i] = sda;  // sample SDA on SCL high
+            scl = 0; #10;
+        end
+
+        // Master sends ACK or NACK
+        sda_out_val = ack ? 1 : 0;
+        sda_out_en = 1;
+        #5;
+        scl = 1; #10;
+        scl = 0; #10;
+        sda_out_en = 0; // release SDA after ACK/NACK
+    end
+    endtask
+
+    // Task: Write conf register 0x3000 at address pointer 0x00
+    task i2c_write_transaction;
+    begin
+        i2c_start();
+
+        // Device address + write bit (0x48 << 1 = 0x90)
+        i2c_send_byte(8'h90);
+        $display("Write Transaction 1: Sent device address byte 0x90 at time %0t", $time);
+
+        // Address pointer (register select) 0x00 (conf register)
+        i2c_send_byte(8'h01);
+        $display("Write Transaction 1: Sent address pointer byte 0x00 at time %0t", $time);
+
+        // Data MSB
+        i2c_send_byte(8'h30);
+        $display("Write Transaction 1: Sent data byte 0x30 at time %0t", $time);
+
+        // Data LSB
+        i2c_send_byte(8'h00);
+        $display("Write Transaction 1: Sent data byte 0x00 at time %0t", $time);
+
+        i2c_stop();
+
+        #50; // wait for DUT to process write
+
+        // Display DUT internal registers
+        $display("After Write Transaction 1:");
+        $display("conv = 0x%04h, conf = 0x%04h, lot = 0x%04h, hit = 0x%04h",
+                 uut.conv, uut.conf, uut.lot, uut.hit);
+
+        #200;
+    end
+    endtask
+
+    // Task: Write address pointer 0x00 to select conv register for reading
+    task i2c_write_transaction1;
+    begin
+        i2c_start();
+
+        // Device address + write bit
+        i2c_send_byte(8'h90);
+        $display("Write Transaction 2: Sent device address byte 0x90 at time %0t", $time);
+
+        // Address pointer byte 0x00 (select conv register)
+        i2c_send_byte(8'h00);
+        $display("Write Transaction 2: Sent address pointer byte 0x00 at time %0t", $time);
+
+        i2c_stop();
+
+        #50; // wait for DUT to process
+
+        // Display DUT internal registers
+        $display("After Write Transaction 2:");
+        $display("conv = 0x%04h, conf = 0x%04h, lot = 0x%04h, hit = 0x%04h",
+                 uut.conv, uut.conf, uut.lot, uut.hit);
+
+        #200;
+    end
+    endtask
+
+    // Task: Read two bytes from conv register
+    task i2c_read_transaction;
+    reg [7:0] read_byte1, read_byte2;
+    begin
+        i2c_start();
+
+        // Device address + read bit (0x48 << 1) + 1 = 0x91
+        i2c_send_byte(8'h91);
+
+        // Read MSB with ACK
+        i2c_read_byte(read_byte1, 0);
+
+        // Read LSB with NACK
+        i2c_read_byte(read_byte2, 1);
+
+        i2c_stop();
+
+        $display("Read Data Byte 1 (MSB): 0x%02h", read_byte1);
+        $display("Read Data Byte 2 (LSB): 0x%02h", read_byte2);
+        $display("Combined Conversion Register Readback: 0x%04h", {read_byte1, read_byte2});
+
+        #100;
+    end
+    endtask
+
+endmodule
