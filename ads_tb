@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 `include "i2c_Goutham2.v"
-
+//in different branch
 module ads_tb;
 
     reg clk;
